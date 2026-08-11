@@ -3,6 +3,7 @@ import datetime
 import logging
 import random
 import os
+import sys
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -11,7 +12,6 @@ from aiogram.enums import ParseMode
 import aiosqlite
 
 # ========== КОНФИГУРАЦИЯ ==========
-# Токен теперь берется из переменной окружения BOT_TOKEN
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден в переменных окружения!")
@@ -20,10 +20,17 @@ BOT_NAME = "💰 Dabloons"
 CURRENCY_NAME = "Dabloons"
 CURRENCY_SHORT = "DBL"
 
-DB_NAME = "wallet.db"
-# ===================================
+# Абсолютный путь к БД (работает и на локальной машине, и на хостинге)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_NAME = os.path.join(BASE_DIR, "wallet.db")
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
+# ===================================
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
@@ -33,6 +40,7 @@ active_games = {}
 
 # ========== РАБОТА С БАЗОЙ ==========
 async def init_db():
+    """Создаёт таблицу users, если её нет."""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -44,6 +52,7 @@ async def init_db():
             )
         """)
         await db.commit()
+    logger.info(f"База данных инициализирована: {DB_NAME}")
 
 async def get_user(user_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
@@ -57,9 +66,18 @@ async def create_user(user_id: int, username: str):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             "INSERT INTO users (user_id, username, balance, last_daily) VALUES (?, ?, ?, ?)",
-            (user_id, username, 1000, None)
+            (user_id, username or "NoName", 1000, None)
         )
         await db.commit()
+    logger.info(f"Создан новый пользователь: {user_id} (@{username})")
+
+async def ensure_user_exists(user_id: int, username: str):
+    """Проверяет, есть ли пользователь в БД, и создаёт, если нет."""
+    user = await get_user(user_id)
+    if not user:
+        await create_user(user_id, username)
+        user = await get_user(user_id)
+    return user
 
 async def update_balance(user_id: int, amount: int):
     async with aiosqlite.connect(DB_NAME) as db:
@@ -145,10 +163,7 @@ def generate_mines_keyboard(user_id, game_data):
 # ========== ОБЩАЯ ЛОГИКА ЗАПУСКА МИН ==========
 async def start_mines(message: Message, args: list):
     """Запускает игру Мины с аргументами [ставка, количество_мин]."""
-    user = await get_user(message.from_user.id)
-    if not user:
-        await message.answer("Сначала /start.")
-        return
+    user = await ensure_user_exists(message.from_user.id, message.from_user.username)
 
     if len(args) < 2:
         await message.answer("❗ Используй: `.мины <ставка> <количество мин>`\nПример: `.мины 100 3`\nМин от 1 до 5.", parse_mode="Markdown")
@@ -187,7 +202,6 @@ async def start_mines(message: Message, args: list):
     }
     active_games[message.from_user.id] = game_data
 
-    # Списываем ставку сразу
     await update_balance(user[0], -bet)
 
     await message.answer(
@@ -204,27 +218,17 @@ async def start_mines(message: Message, args: list):
 # ========== ОБРАБОТЧИКИ КОМАНД ==========
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    user = await get_user(message.from_user.id)
-    if not user:
-        await create_user(message.from_user.id, message.from_user.username or "NoName")
-        await message.answer(
-            f"🎉 Добро пожаловать в {BOT_NAME}!\n"
-            f"Тебе выдано 1000 {CURRENCY_SHORT} стартовых.\n"
-            "Используй /help для списка команд.",
-            reply_markup=main_menu()
-        )
-    else:
-        await message.answer(
-            "С возвращением! Используй меню или /help.",
-            reply_markup=main_menu()
-        )
+    user = await ensure_user_exists(message.from_user.id, message.from_user.username)
+    await message.answer(
+        f"🎉 Добро пожаловать в {BOT_NAME}!\n"
+        f"Твой баланс: {user[2]} {CURRENCY_SHORT}.\n"
+        "Используй меню или /help для списка команд.",
+        reply_markup=main_menu()
+    )
 
 @dp.message(Command("profile"))
 async def cmd_profile(message: Message):
-    user = await get_user(message.from_user.id)
-    if not user:
-        await message.answer("Сначала /start.")
-        return
+    user = await ensure_user_exists(message.from_user.id, message.from_user.username)
     daily_status = "получен сегодня" if await get_daily_status(user[0]) == datetime.date.today() else "ещё не получен"
     text = (
         f"👤 <b>Твой профиль</b>\n"
@@ -238,18 +242,12 @@ async def cmd_profile(message: Message):
 
 @dp.message(Command("balance"))
 async def cmd_balance(message: Message):
-    user = await get_user(message.from_user.id)
-    if not user:
-        await message.answer("Сначала /start.")
-        return
+    user = await ensure_user_exists(message.from_user.id, message.from_user.username)
     await message.answer(f"💰 Твой баланс: <b>{user[2]}</b> {CURRENCY_SHORT}.")
 
 @dp.message(Command("daily"))
 async def cmd_daily(message: Message):
-    user = await get_user(message.from_user.id)
-    if not user:
-        await message.answer("Сначала /start.")
-        return
+    user = await ensure_user_exists(message.from_user.id, message.from_user.username)
 
     today = datetime.date.today()
     last = await get_daily_status(user[0])
@@ -264,6 +262,7 @@ async def cmd_daily(message: Message):
 
 @dp.message(Command("send"))
 async def cmd_send(message: Message):
+    sender = await ensure_user_exists(message.from_user.id, message.from_user.username)
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
         await message.answer(f"❗ Используй: `/send 100 @username`\nПример: `/send 50 @ivan`", parse_mode="Markdown")
@@ -288,11 +287,6 @@ async def cmd_send(message: Message):
     recipient = await get_user_by_username(username)
     if not recipient:
         await message.answer(f"❌ Пользователь @{username} не найден в базе.")
-        return
-
-    sender = await get_user(message.from_user.id)
-    if not sender:
-        await message.answer("Ты не зарегистрирован.")
         return
 
     if sender[0] == recipient[0]:
@@ -324,10 +318,7 @@ async def cmd_top(message: Message):
 
 @dp.message(Command("duel"))
 async def cmd_duel(message: Message):
-    user = await get_user(message.from_user.id)
-    if not user:
-        await message.answer("Сначала /start.")
-        return
+    user = await ensure_user_exists(message.from_user.id, message.from_user.username)
 
     args = message.text.split()
     if len(args) > 1:
@@ -358,7 +349,7 @@ async def cmd_duel(message: Message):
 
 @dp.message(Command("mines"))
 async def cmd_mines(message: Message):
-    args = message.text.split()[1:]  # убираем команду
+    args = message.text.split()[1:]
     await start_mines(message, args)
 
 @dp.message(Command("joker"))
@@ -367,10 +358,7 @@ async def cmd_joker(message: Message):
 
 # ========== ИГРА ДЖОКЕР ==========
 async def play_joker(message: Message):
-    user = await get_user(message.from_user.id)
-    if not user:
-        await message.answer("Сначала /start.")
-        return
+    user = await ensure_user_exists(message.from_user.id, message.from_user.username)
 
     cost = 50
     if user[2] < cost:
@@ -395,7 +383,7 @@ async def play_joker(message: Message):
 # ========== ОБРАБОТЧИК СООБЩЕНИЙ С ТОЧКОЙ (.команды) ==========
 @dp.message(F.text.startswith('.'))
 async def dot_command_handler(message: Message):
-    text = message.text[1:].strip()  # убираем точку
+    text = message.text[1:].strip()
     if not text:
         return
     parts = text.split()
@@ -407,7 +395,7 @@ async def dot_command_handler(message: Message):
     elif command in ("джокер", "джок"):
         await play_joker(message)
     else:
-        # Игнорируем неизвестные .команды, но можно ответить
+        # Игнорируем неизвестные команды
         pass
 
 # ========== HELP ==========
@@ -448,10 +436,8 @@ async def mines_cell_callback(callback: CallbackQuery):
         return
 
     if cell in game['mines']:
-        # Проигрыш
         game['opened'].add(cell)
         await callback.answer("💣 Ты попал на мину! Ты проиграл.")
-        # Показываем поле с минами
         await callback.message.edit_text(
             f"💣 Ты попал на мину! Ставка {game['bet']} {CURRENCY_SHORT} сгорела.",
             reply_markup=generate_mines_keyboard(user_id, game)
@@ -459,7 +445,6 @@ async def mines_cell_callback(callback: CallbackQuery):
         del active_games[user_id]
         return
 
-    # Безопасная ячейка
     game['opened'].add(cell)
     opened_safe = len([x for x in game['opened'] if x not in game['mines']])
     safe_total = game['safe_count']
@@ -516,6 +501,7 @@ async def mines_quit(callback: CallbackQuery):
 async def main_menu_callback(callback: CallbackQuery):
     await callback.answer()
     data = callback.data
+    # Для всех callback-запросов из меню мы будем использовать команды, которые сами зарегистрируют пользователя
     if data == "profile":
         await cmd_profile(callback.message)
     elif data == "balance":
@@ -534,7 +520,7 @@ async def main_menu_callback(callback: CallbackQuery):
 # ========== ЗАПУСК ==========
 async def main():
     await init_db()
-    print(f"🤖 Бот {BOT_NAME} запущен!")
+    logger.info(f"🤖 Бот {BOT_NAME} запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
