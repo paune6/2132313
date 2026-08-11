@@ -20,7 +20,6 @@ BOT_NAME = "💰 Dabloons"
 CURRENCY_NAME = "Dabloons"
 CURRENCY_SHORT = "DBL"
 
-# Абсолютный путь к БД (работает и на локальной машине, и на хостинге)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_NAME = os.path.join(BASE_DIR, "wallet.db")
 
@@ -40,7 +39,6 @@ active_games = {}
 
 # ========== РАБОТА С БАЗОЙ ==========
 async def init_db():
-    """Создаёт таблицу users, если её нет."""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -72,7 +70,6 @@ async def create_user(user_id: int, username: str):
     logger.info(f"Создан новый пользователь: {user_id} (@{username})")
 
 async def ensure_user_exists(user_id: int, username: str):
-    """Проверяет, есть ли пользователь в БД, и создаёт, если нет."""
     user = await get_user(user_id)
     if not user:
         await create_user(user_id, username)
@@ -162,11 +159,13 @@ def generate_mines_keyboard(user_id, game_data):
 
 # ========== ОБЩАЯ ЛОГИКА ЗАПУСКА МИН ==========
 async def start_mines(message: Message, args: list):
-    """Запускает игру Мины с аргументами [ставка, количество_мин]."""
     user = await ensure_user_exists(message.from_user.id, message.from_user.username)
 
     if len(args) < 2:
-        await message.answer("❗ Используй: `.мины <ставка> <количество мин>`\nПример: `.мины 100 3`\nМин от 1 до 5.", parse_mode="Markdown")
+        await message.answer(
+            "❗ Используй: `.мины (ставка) (количество мин)`\nПример: `.мины 100 3`\nМин от 1 до 5.",
+            parse_mode="Markdown"
+        )
         return
 
     try:
@@ -265,7 +264,10 @@ async def cmd_send(message: Message):
     sender = await ensure_user_exists(message.from_user.id, message.from_user.username)
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
-        await message.answer(f"❗ Используй: `/send 100 @username`\nПример: `/send 50 @ivan`", parse_mode="Markdown")
+        await message.answer(
+            "❗ Используй: `/send 100 @username`\nПример: `/send 50 @ivan`",
+            parse_mode="Markdown"
+        )
         return
 
     try:
@@ -336,7 +338,10 @@ async def cmd_duel(message: Message):
     else:
         bet = 50
         if user[2] < bet:
-            await message.answer(f"❌ У тебя меньше {bet} {CURRENCY_SHORT}, измени ставку: `/duel <сумма>`", parse_mode="Markdown")
+            await message.answer(
+                f"❌ У тебя меньше {bet} {CURRENCY_SHORT}, измени ставку: `/duel (сумма)`",
+                parse_mode="Markdown"
+            )
             return
 
     win = random.choice([True, False])
@@ -410,7 +415,7 @@ async def cmd_help(message: Message):
         f"/send 100 @username – перевести монеты\n"
         f"/top – топ-10 богачей\n"
         f"/duel [ставка] – сразиться с ботом (по умолчанию 50)\n"
-        f"/mines <ставка> <мин> – игра «Мины» (ставка, 1-5 мин)\n"
+        f"/mines (ставка) (мин) – игра «Мины» (ставка, 1-5 мин)\n"
         f"/joker – сыграть в Джокера (стоит 50 монет)\n"
         f"/help – эта справка\n"
         f"\n<b>Также можно использовать в любом чате:</b>\n"
@@ -501,7 +506,6 @@ async def mines_quit(callback: CallbackQuery):
 async def main_menu_callback(callback: CallbackQuery):
     await callback.answer()
     data = callback.data
-    # Для всех callback-запросов из меню мы будем использовать команды, которые сами зарегистрируют пользователя
     if data == "profile":
         await cmd_profile(callback.message)
     elif data == "balance":
@@ -513,7 +517,10 @@ async def main_menu_callback(callback: CallbackQuery):
     elif data == "duel":
         await cmd_duel(callback.message)
     elif data == "mines":
-        await callback.message.answer("Используй команду `/mines <ставка> <мин>` или `.мины <ставка> <мин>`", parse_mode="Markdown")
+        await callback.message.answer(
+            "Используй команду `/mines (ставка) (мин)` или `.мины (ставка) (мин)`",
+            parse_mode="Markdown"
+        )
     elif data == "joker":
         await play_joker(callback.message)
 
