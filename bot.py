@@ -5,7 +5,7 @@ import random
 import os
 import sys
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, ChatTypeFilter
+from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode, ChatType
@@ -466,7 +466,8 @@ async def dot_command_handler(message: Message):
     # иначе игнорируем
 
 # ========== КОРОТКИЕ КОМАНДЫ (только в личке) ==========
-@dp.message(ChatTypeFilter(ChatType.PRIVATE), F.text)
+# Используем фильтр по типу чата через F.chat.type
+@dp.message(F.chat.type == ChatType.PRIVATE, F.text)
 async def short_commands(message: Message):
     text = message.text.lower().strip()
     if text in ("б", "баланс"):
@@ -474,7 +475,7 @@ async def short_commands(message: Message):
     elif text in ("п", "профиль"):
         await cmd_profile(message)
     elif text in ("д", "дуэль"):
-        await cmd_duel(message)  # вызовет дуэль со ставкой по умолчанию
+        await cmd_duel(message)
     elif text in ("дж", "джокер"):
         await play_joker(message)
     elif text in ("т", "топ"):
